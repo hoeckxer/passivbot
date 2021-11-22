@@ -68,6 +68,7 @@ class Bot:
         self.log_level = 0
 
         self.stop_websocket = False
+        self.new_symbol = None
         self.process_websocket_ticks = True
         self.lock_file = f"{str(Path.home())}/.{self.exchange}_passivbotlock"
 
@@ -573,6 +574,10 @@ class Bot:
                         if self.telegram is not None:
                             self.telegram.send_msg("<pre>Bot stopped</pre>")
                         break
+                    if self.new_symbol is not None:
+                        if self.telegram is not None:
+                            self.telegram.send_msg(f"<pre>Changing symbol to {self.new_symbol}</pre>")
+                        break
                     k += 1
 
                 except Exception as e:
@@ -580,7 +585,7 @@ class Bot:
                         print('error in websocket', e, msg)
 
 async def start_bot(bot):
-    while not bot.stop_websocket:
+    while not bot.stop_websocket and bot.new_symbol is None:
         try:
             await bot.start_websocket()
         except Exception as e:
@@ -649,6 +654,24 @@ async def main() -> None:
     config['symbol'] = args.symbol
     config['live_config_path'] = args.live_config_path
 
+    bot = await create_bot(account, config)
+
+    if 'telegram' in account and account['telegram']['enabled']:
+        telegram = await _start_telegram(account=account, bot=bot)
+        bot.telegram = telegram
+    signal.signal(signal.SIGINT, bot.stop)
+    signal.signal(signal.SIGTERM, bot.stop)
+    while bot.stop_websocket is not True:
+        if bot.new_symbol is not None:
+            config['symbol'] = bot.new_symbol
+            bot = await create_bot(account, config)
+            bot.telegram = telegram
+            telegram._bot = bot
+        await start_bot(bot)
+    await bot.session.close()
+
+
+async def create_bot(account, config):
     if account['exchange'] == 'binance':
         from procedures import create_binance_bot
         bot = await create_binance_bot(config)
@@ -657,14 +680,7 @@ async def main() -> None:
         bot = await create_bybit_bot(config)
     else:
         raise Exception('unknown exchange', account['exchange'])
-
-    if 'telegram' in account and account['telegram']['enabled']:
-        telegram = await _start_telegram(account=account, bot=bot)
-        bot.telegram = telegram
-    signal.signal(signal.SIGINT, bot.stop)
-    signal.signal(signal.SIGTERM, bot.stop)
-    await start_bot(bot)
-    await bot.session.close()
+    return bot
 
 
 if __name__ == '__main__':

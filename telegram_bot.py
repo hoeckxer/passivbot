@@ -39,7 +39,7 @@ class Telegram:
         second_keyboard_buttons = [
             [KeyboardButton('/reload_config \U0000267B'), KeyboardButton('/set_short \U0001F4C9'), KeyboardButton('/set_long \U0001F4C8')],
             [KeyboardButton('/transfer \U0001F3E6'), KeyboardButton('/set_profit_transfer \U0001F4DD'), KeyboardButton('/set_config \U0001F4C4')],
-            [KeyboardButton('/previous \U000023EA'), KeyboardButton('/stop \U000026D4')]
+            [KeyboardButton('/previous \U000023EA'), KeyboardButton('/set_symbol \U0001F4DD'), KeyboardButton('/stop \U000026D4')]
         ]
         self._keyboard_idx = 0
         self._keyboards = [ReplyKeyboardMarkup(first_keyboard_buttons, resize_keyboard=True),
@@ -109,9 +109,60 @@ class Telegram:
             },
             fallbacks=[CommandHandler('cancel', self._abort)]
         ))
+        dispatcher.add_handler(ConversationHandler(
+            entry_points=[MessageHandler(Filters.regex('/set_symbol.*'), self._begin_set_symbol)],
+            states={
+                1: [MessageHandler(Filters.regex('.*'), self._symbol_chosen)],
+                2: [MessageHandler(Filters.regex('.*'), self._verify_symbol_confirmation)],
+            },
+            fallbacks=[CommandHandler('cancel', self._abort)]
+        ))
 
         dispatcher.add_handler(MessageHandler(Filters.regex('/next.*'), self._next_page))
         dispatcher.add_handler(MessageHandler(Filters.regex('/previous.*'), self._previous_page))
+
+    def _begin_set_symbol(self, update: Update, _: CallbackContext) -> int:
+        self.new_symbol = None
+        reply_keyboard = [['/cancel']]
+        text = 'Please type thee symbol to load, prefixed with / (for example "/BTCUSDT")'
+        update.message.reply_text(
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+        )
+        return 1
+
+    def _symbol_chosen(self, update: Update, _: CallbackContext) -> int:
+        input = update.effective_message.text
+        if input == 'cancel':
+            update.effective_message.reply_text('Action aborted', reply_markup=self._keyboards[self._keyboard_idx])
+            return ConversationHandler.END
+
+        self.new_symbol = input.replace('/', '')
+
+        reply_keyboard = [['confirm', 'abort']]
+        text = f"You have chosen to switch to symbol {input}. Please confirm this choice."
+        update.message.reply_text(
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+        )
+        return 2
+
+    def _verify_symbol_confirmation(self, update: Update, _: CallbackContext) -> int:
+        answer = update.effective_message.text
+
+        if answer not in ['confirm', 'abort']:
+            return 3
+        elif answer == 'abort':
+            self.send_msg(f'Switching symbol aborted')
+            self.new_symbol = None
+            return ConversationHandler.END
+
+        self.send_msg(f'Switching symbol to {self.new_symbol}')
+        self._bot.new_symbol = self.new_symbol
+        self.new_symbol = None
+        return ConversationHandler.END
 
     def _begin_transfer(self, update: Update, _: CallbackContext) -> int:
         if self._bot.exchange == 'bybit':
